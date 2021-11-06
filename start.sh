@@ -1,0 +1,5 @@
+python main.py --base_path="speech_data" --ckpt_dir="ckpt" --log_dir="log" --with_audio_share_vae --with_motion_share_vae --with_motion_spec_vae --with_mapping_net --with_mapping_net_vae --with_code_constrain --with_cyc --with_ds --lambda_kl 1e-3 --lambda_code 0.1 --lambda_cyc 0.1 --lambda_ds 0.1  --lambda_pose 10 --lambda_speed 10 --lambda_xpose 10 --lambda_xspeed 20 --lambda_xrotmat 10 --lr 1e-4 --batch_size 32 --seq_len 128 --tolerance 0.02 --dropout 0 --num_workers 1  --joint_num 22 --audio_stat speech_stat.npy --save_freq 100 --dataset Trinity --using_mspec_stat 
+
+python3 calculate_training_stat.py --base_path="speech_data" --with_audio_share_vae --with_motion_share_vae --with_motion_spec_vae --with_mapping_net --with_mapping_net_vae --batch_size 1 --seq_len -1 --resume "ckpt/epoch4500.pth" --using_mspec_stat --joint_num 22 --audio_stat speech_stat.npy 
+
+python3 test.py --base_path="speech_data" --with_audio_share_vae --with_motion_share_vae --with_motion_spec_vae --with_mapping_net --with_mapping_net_vae --batch_size 1 --seq_len -1 --resume "ckpt/epoch4500.pth" --using_mspec_stat --joint_num 22 --audio_stat speech_stat.npy 
