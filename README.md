@@ -14,8 +14,8 @@ Audio2Motion Official implementation for Audio2Motion: Generating Diverse Gestur
 3. convert the fbx data to hdf5 format using script ``fbx2hdf.py``
 
 
-##Training and testing
+## Training and testing
 Run script ``bash start.sh``
 
-##Visualizing
+## Visualizing
 Run script ``smplx2hdf.py``
