@@ -1,5 +1,5 @@
-# Audio2Motion
-Audio2Motion Official implementation for Audio2Motion: Generating Diverse Gestures from Speech with Conditional Variational Autoencoders.
+# Audio2Gestures
+Official implementation for Audio2Gestures: Generating Diverse Gestures from Speech Audio with Conditional Variational Autoencoders
 
 ## Dependencies
 - [pytorch](https://pytorch.org/)
@@ -19,3 +19,11 @@ Run script ``bash start.sh``
 
 ## Visualizing
 Run script ``smplx2hdf.py``
+
+## Reference
+If you find our code useful for your research, please cite our paper.
+> @article{2021Audio2Gestures,
+>   title={Audio2Gestures: Generating Diverse Gestures from Speech Audio with Conditional Variational Autoencoders},
+>   author={ Li, J.  and  Kang, D.  and  Pei, W.  and  Zhe, X.  and  Bao, L. },
+>   year={2021},
+> }
