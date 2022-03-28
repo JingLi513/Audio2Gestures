@@ -18,12 +18,14 @@ Official implementation for Audio2Gestures: Generating Diverse Gestures from Spe
 Run script ``bash start.sh``
 
 ## Visualizing
-Run script ``smplx2hdf.py``
+Run script ``python .\smplx2fbx.py --smplx .\for_smplx_retargeting.h5  --key joint_trans_mats --fps 30  --synthesized .\input.h5 --fbx output.fbx`` 
 
 ## Reference
 If you find our code useful for your research, please cite our paper.
-> @article{2021Audio2Gestures,
->   title={Audio2Gestures: Generating Diverse Gestures from Speech Audio with Conditional Variational Autoencoders},
->   author={ Li, J.  and  Kang, D.  and  Pei, W.  and  Zhe, X.  and  Bao, L. },
->   year={2021},
+> @inproceedings{li2021audio2gestures,
+>  title={Audio2Gestures: Generating Diverse Gestures from Speech Audio with Conditional Variational Autoencoders},
+>  author={Li, Jing and Kang, Di and Pei, Wenjie and Zhe, Xuefei and Zhang, Ying and He, Zhenyu and Bao, Linchao},
+>  booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
+>  pages={11293--11302},
+>  year={2021}
 > }
