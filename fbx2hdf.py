@@ -107,8 +107,7 @@ def fbx2hdf(config):
 
     names, pos, trans_mats, global_translation = tools.extract_data(animations)
 
-    reorder_joints(trans_mats, names, SMPLX_JOINT_TO_IDX)
-    data_dict["joint_names"] = [n.encode("ascii", "ignore") for n in names]
+    trans_mats = reorder_joints(trans_mats, names, SMPLX_JOINT_TO_IDX)
 
     assert np.array_equal(global_translation, pos[:, 0, :])
 
