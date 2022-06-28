@@ -18,7 +18,7 @@ Official implementation for Audio2Gestures: Generating Diverse Gestures from Spe
 Run script ``bash start.sh``
 
 ## Visualizing
-Run script ``python .\smplx2fbx.py --smplx .\for_smplx_retargeting.h5  --key joint_trans_mats --fps 30  --synthesized .\input.h5 --fbx output.fbx`` 
+Run script ``python .\smplx2fbx.py --smplx .\for_smplx_retargeting.h5  --key LclRotation --fps 30  --synthesized .\input.h5 --fbx output.fbx`` 
 
 ## Reference
 If you find our code useful for your research, please cite our paper.
