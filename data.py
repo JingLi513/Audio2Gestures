@@ -62,8 +62,7 @@ class Dataset(torch.utils.data.Dataset):
     def __init__(self, args):
         self.ids = []
         self.seq_len = args.seq_len
-        self.joint_num = args.joint_num
-        self.with_translation = args.with_translation
+        # self.joint_num = args.joint_num
 
         self.file_names = os.listdir(args.base_path)
         self.file_names = [
@@ -72,8 +71,6 @@ class Dataset(torch.utils.data.Dataset):
         self.file_names = sorted(self.file_names)
         self.audio_features = []
         self.pose_features = []
-        if self.with_translation:
-            self.translation = []
 
         audio_mean = 0
         audio_var = 1
@@ -88,36 +85,29 @@ class Dataset(torch.utils.data.Dataset):
             with h5py.File(os.path.join(args.base_path, file_name), "r") as f:
                 audio = f[args.audio_key][()]
                 poses = f[args.pose_key][()]
-                if self.with_translation:
-                    trans = f["global_translation"][()]
-                poses = poses[:, : args.joint_num, :3, :3]
+                poses = poses[:, :, :3, :3]
 
+            if poses.shape[0] >= args.seq_len:
+                audio_feature = librosa.feature.melspectrogram(
+                    y=audio, sr=args.sr, hop_length=hop_length, n_mels=64
+                )
+                audio_feature = librosa.power_to_db(audio_feature)
+                audio_feature = audio_feature.transpose()
+                audio_feature -= audio_mean
+                audio_feature /= audio_var
 
+                audio_len = audio_feature.shape[0]
+                pose_len = poses.shape[0]
+                seq_len = min(audio_len, pose_len)
+                if args.seq_len > 0:
+                    self.ids.extend([seq_id] * (seq_len // self.seq_len))
+                else:
+                    self.ids.extend([seq_id])
+                audio_feature = audio_feature[:seq_len]
+                poses = poses[:seq_len]
 
-                if poses.shape[0] >= args.seq_len:
-                    audio_feature = librosa.feature.melspectrogram(
-                        y=audio, sr=args.sr, hop_length=hop_length, n_mels=64
-                    )
-                    audio_feature = librosa.power_to_db(audio_feature)
-                    audio_feature = audio_feature.transpose()
-                    audio_feature -= audio_mean
-                    audio_feature /= audio_var
-
-                    audio_len = audio_feature.shape[0]
-                    pose_len = poses.shape[0]
-                    seq_len = min(audio_len, pose_len)
-                    if args.seq_len > 0:
-                        self.ids.extend([seq_id] * (seq_len // self.seq_len))
-                    else:
-                        self.ids.extend([seq_id])
-                    audio_feature = audio_feature[:seq_len]
-                    poses = poses[:seq_len]
-
-                    self.audio_features.append(audio_feature)
-                    self.pose_features.append(poses)
-                    if self.with_translation:
-                        trans = trans[:seq_len]
-                        self.translation.append(trans)
+                self.audio_features.append(audio_feature)
+                self.pose_features.append(poses)
 
     def __len__(self):
         return len(self.ids)  
@@ -136,19 +126,9 @@ class Dataset(torch.utils.data.Dataset):
 
         audio_feature = audio_feature[start:end]
         poses = poses[start:end]
-        if self.with_translation:
-            trans = self.translation[self.ids[index]]
-            trans = trans[start:end]
-            trans = trans - trans[0]
-            return {
-                "audios": audio_feature,
-                "poses": poses,
-                "trans": trans,
-                "filename": filename,
-            }
-        else:
-            return {
-                "audios": audio_feature,
-                "poses": poses,
-                "filename": filename,
-            }
+
+        return {
+            "audios": audio_feature,
+            "poses": poses,
+            "filename": filename,
+        }

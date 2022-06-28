@@ -594,7 +594,7 @@ def to_np(array, dtype=np.float32):
     return np.array(array, dtype=dtype)
 
 
-def load_smplx_model(smpl_path, device):
+def load_smplx_model(smpl_path):
     # assert use_torch, "do NOT support numpy version yet"
     model = {}
     assert os.path.isfile(smpl_path)
@@ -606,10 +606,10 @@ def load_smplx_model(smpl_path, device):
     model["shapedirs"] = to_np(data_struct.shapedirs)
     model["J_regressor"] = to_np(data_struct.J_regressor)
     model["parents"][0] = -1
-    model["parents"] = torch.tensor(model["parents"]).long().to(device)
-    model["v_template"] = torch.tensor(model["v_template"]).float().to(device)
-    model["shapedirs"] = torch.tensor(model["shapedirs"]).float().to(device)
-    model["J_regressor"] = torch.tensor(model["J_regressor"]).float().to(device)
+    model["parents"] = torch.tensor(model["parents"]).long() #.to(device)
+    model["v_template"] = torch.tensor(model["v_template"]).float()# .to(device)
+    model["shapedirs"] = torch.tensor(model["shapedirs"]).float()# .to(device)
+    model["J_regressor"] = torch.tensor(model["J_regressor"]).float()# .to(device)
     return model
 
 
@@ -765,13 +765,12 @@ def batch_rigid_transform(rot_mats, joints, parents, dtype=torch.float32):
 def so3_relative_angle(m1, m2):
     m1 = m1.reshape(-1, 3, 3)
     m2 = m2.reshape(-1, 3, 3)
-    batch = m1.shape[0]
     m = torch.bmm(m1, m2.transpose(1, 2))  # batch*3*3
     cos = (m[:, 0, 0] + m[:, 1, 1] + m[:, 2, 2] - 1) / 2
-    cos = torch.min(cos, torch.autograd.Variable(torch.ones(batch).cuda()))
-    cos = torch.max(cos, torch.autograd.Variable(torch.ones(batch).cuda()) * -1)
+    cos = torch.clamp(cos, min=-1 + 1E-6, max=1-1E-6)
     theta = torch.acos(cos)
     return theta
+
 
 # speakers consts
 SPEAKERS_CONFIG = {

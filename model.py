@@ -30,41 +30,6 @@ def init(module):
             nn.init.constant_(module.bias, 0)
 
 
-class SMPLXModel(nn.Module):
-    def __init__(self, smpl_path) -> None:
-        super(SMPLXModel, self).__init__()
-        data_struct = load_smplx_model(smpl_path)
-        self.register_buffer("parents", data_struct["parents"])
-        self.joint_num = len(self.parents)
-        if len(self.parents) == 55:
-            meta_betas = torch.zeros(1, 20).float()
-        else:
-            meta_betas = torch.zeros(1, 10).float()
-        v_shaped = data_struct["v_template"] + blend_shapes(
-            meta_betas, data_struct["shapedirs"]
-        )
-        self.register_buffer("J", vertices2joints(data_struct["J_regressor"], v_shaped))
-
-    def forward(self, rot_mats: torch.Tensor):
-        if rot_mats.shape[1] == 22:
-            rot_mats = torch.cat(
-                (
-                    rot_mats,
-                    torch.eye(3)
-                    .repeat(rot_mats.shape[0], 33, 1, 1)
-                    .to(rot_mats.device),
-                ),
-                axis=1,
-            )
-        poses, _ = batch_rigid_transform(
-            rot_mats,
-            self.J.expand(rot_mats.shape[0], self.joint_num, 3),
-            self.parents,
-            dtype=torch.float32,
-        )
-        return poses
-
-
 class Motion_Process(nn.Module):
     def __init__(self) -> None:
         super(Motion_Process, self).__init__()
@@ -82,19 +47,31 @@ class Motion_Process(nn.Module):
         return pos[:, 1:] - pos[:, :-1]
 
 
-class Process_3D_Motion(Motion_Process):
-    def __init__(self, args) -> None:
+class Process_3D_Motion(nn.Module):
+    def __init__(
+        self,
+        smplx_path,
+        ignore_joints=None, # set the rotation of the joints to identity
+    ) -> None:
         super(Process_3D_Motion, self).__init__()
-        self.smpl_model = SMPLXModel(args.smpl_path)
-        self.with_translation = args.with_translation
-        self.seq_len = args.seq_len
+        if ignore_joints is None:
+            self.ignore_joints = []
+        else:
+            self.ignore_joints = ignore_joints
 
-    def encode_motion(self, motion: torch.Tensor, trans=None) -> torch.Tensor:
+        data_struct = load_smplx_model(smplx_path)
+        self.register_buffer("parents", data_struct["parents"])
+        self.joint_num = len(self.parents)
+        meta_betas = torch.zeros(1, 20).float()
+        v_shaped = data_struct["v_template"] + blend_shapes(meta_betas, data_struct["shapedirs"])
+        self.register_buffer("J", vertices2joints(data_struct["J_regressor"], v_shaped))
+        self.selected_joints = [i for i in range(self.joint_num) if i not in self.ignore_joints]
+
+    def encode_motion(self, motion: torch.Tensor) -> torch.Tensor:
+        assert len(motion.shape) == 5, f"Expects an array of size BxTxNx3x3, but received {motion.shape}"
         B, T = motion.shape[:2]
-
-        motion = motion.reshape(B, T, -1)
-        if trans is not None:
-            motion = torch.cat((motion, trans), dim=-1)
+        # motion[:, :, self.ignore_joints] = torch.eye(3, device=motion.device)
+        motion = motion[:, :, self.selected_joints, :2, :3].reshape(B, T, -1)
         return motion
 
     def decode_motion(self, motion: torch.Tensor):
@@ -102,22 +79,32 @@ class Process_3D_Motion(Motion_Process):
         Args:
             inputs: input tensor of shape: (B, T, C)
         """
+        assert len(motion.shape) == 3, f"Expects an array of size BxTxC, but received {motion.shape}"
         B, T = motion.shape[:2]
-        if self.with_translation:
-            rot_mats = motion[:, :, :-3]
-            rot_mats = rot_mats.reshape(B, T, -1, 3, 3)
-            trans = motion[:, :, -3:]
-            return rot_mats, trans
-        else:
-            rot_mats = motion
-            return rot_mats
+        rot_mats = rotation_6d_to_matrix(motion.reshape(-1, 6)).reshape(B, T, -1, 3, 3)
+        output = torch.eye(3, device=rot_mats.device).tile(B, T, self.joint_num, 1, 1)
+        output[:, :, self.selected_joints] = rot_mats
+        # rot_mats = rot_mats.reshape(B, T, -1, 3, 3)
+        return output
 
-    def calculate_pos(self, motion: torch.Tensor, trans=None) -> torch.Tensor:
+    def calculate_pos(self, motion: torch.Tensor) -> torch.Tensor:
+        assert len(motion.shape) == 5, f"Expects an array of size BxTxNx3x3, but received {motion.shape}"
         B, T = motion.shape[:2]
-        poses = self.smpl_model(motion.reshape(B * T, -1, 3, 3)).reshape(B, T, -1, 3)
-        if trans is not None:
-            poses = poses + trans.unsqueeze(2)
+        motion[:, :, self.ignore_joints] = torch.eye(3, device=motion.device)
+        rot_mats = motion.reshape(B * T, -1, 3, 3)
+        poses, _ = batch_rigid_transform(
+            rot_mats,
+            self.J.expand(rot_mats.shape[0], self.joint_num, 3),
+            self.parents,
+            dtype=torch.float32,
+        )
+        poses = poses.reshape(B, T, -1, 3)
         return poses
+
+    def calculate_joint_speed(self, pos: torch.Tensor) -> torch.Tensor:
+        # assert len(pos.shape) == 4, f"Expects an array of size BxTxNxC, but received {pos.shape}"
+        return pos[:, 1:] - pos[:, :-1]
+
 
 
 class Process_S2G_Motion(Motion_Process):
@@ -161,16 +148,12 @@ class Model:
     def __init__(self, args, mode="Train"):
         super().__init__()
         self.args = args
-        self.feat_in_time_domain = args.feat_in_time_domain
-        self.freqbasis = args.freqbasis
         if args.dataset == "Speech2Gestures":
             self.motion_processor = Process_S2G_Motion(args)
         elif args.dataset == "Trinity":
-            self.motion_processor = Process_3D_Motion(args)
+            self.motion_processor = Process_3D_Motion(args.smplx_path, ignore_joints=list(range(22,55)))
         else:
             raise NotImplementedError
-
-        self.smpl_model = SMPLXModel(args.smpl_path)
 
         self.device = torch.device(args.device)
         self.logger = tensorboard.SummaryWriter(args.log_dir)
@@ -203,7 +186,7 @@ class Model:
     def sampling(self, size=None, mean=None, var=None):
         if self.args.using_mspec_stat:
             normal = Normal(mean, var)
-            z_x = normal.sample((self.args.seq_len,)).permute(1, 0, 2)
+            z_x = normal.sample((size,)).permute(1, 0, 2)
         else:
             z_x = torch.randn(size, device=self.device)
         if self.args.with_mapping_net:
@@ -229,13 +212,13 @@ class Model:
             if self.args.using_mspec_stat:
                 idx = random.randint(0, means.shape[0] - 1)
                 z_motion_spec = self.sampling(
-                    mean=means[idx : idx + 1], var=vars[idx : idx + 1],
+                    mean=means[idx : idx + 1], var=vars[idx : idx + 1], size=z_audio_share.shape[1]
                 )
             else:
                 z_motion_spec = self.sampling(size=z_audio_share.shape)
         else:
             _, z_motion_spec = self.net_G["motion_enc"](motions[:, :seq_len])
-        pred_motions = self.net_G["motion_dec"].inference(z_audio_share, z_motion_spec)
+        pred_motions = self.net_G["motion_dec"](z_audio_share, z_motion_spec)
         return pred_motions
 
     def train_one_batch(self, audios: torch.Tensor, motions: torch.Tensor):
@@ -247,36 +230,23 @@ class Model:
         recon_m = self.net_G["motion_dec"](self.z_motion_share, self.z_motion_specific)
         a2m = self.net_G["motion_dec"](self.z_audio_share, self.z_motion_specific)
         self.z_x = self.sampling(
-            size=self.z_motion_specific.shape,
-            mean=self.z_motion_specific.mean(dim=(1,)),
-            var=self.z_motion_specific.std(dim=(1,)),
-        )
-        z_x2 = self.sampling(
-            size=self.z_motion_specific.shape,
+            size=self.z_motion_specific.shape[1],
             mean=self.z_motion_specific.mean(dim=(1,)),
             var=self.z_motion_specific.std(dim=(1,)),
         )
 
         a2x = self.net_G["motion_dec"](self.z_audio_share, self.z_x)
-        a2x2 = self.net_G["motion_dec"](self.z_audio_share, z_x2)
-        if self.args.with_translation:
-            a2x, a2x_trans = self.motion_processor.decode_motion(a2x)
-            (_, self.z_a2x_spec) = self.net_G["motion_enc"](
-                self.motion_processor.encode_motion(a2x, a2x_trans)
-            )
-        else:
-            a2x = self.motion_processor.decode_motion(a2x)
-            (_, self.z_a2x_spec) = self.net_G["motion_enc"](
-                self.motion_processor.encode_motion(a2x)
-            )
-        return recon_m, a2m, a2x, a2x2
 
-    def calculate_2d_loss(self, tgt_p, recon_p, a2m_p, a2x_p, a2x2_p, batch):
+        (self.z_a2x_share, self.z_a2x_spec) = self.net_G["motion_enc"](
+            self.motion_processor.encode_motion(self.motion_processor.decode_motion(a2x))
+        )
+        return recon_m, a2m, a2x
+
+    def calculate_2d_loss(self, tgt_p, recon_p, a2m_p, a2x_p, batch):
         tgt_p = self.motion_processor.decode_motion(tgt_p)
         recon_p = self.motion_processor.decode_motion(recon_p)
         a2m_p = self.motion_processor.decode_motion(a2m_p)
         a2x_p = self.motion_processor.decode_motion(a2x_p)
-        a2x2_p = self.motion_processor.decode_motion(a2x2_p)
 
         tgt_s = self.motion_processor.calculate_joint_speed(tgt_p)
         recon_s = self.motion_processor.calculate_joint_speed(recon_p)
@@ -291,7 +261,7 @@ class Model:
             "pos/audio2position_x": joint_distance[
                 joint_distance > self.args.tolerance
             ].mean()
-            * self.args.lambda_pose,
+            * self.args.lambda_xpose,
             "speed/audio2speed_x": F.l1_loss(a2x_s, tgt_s) * self.args.lambda_xspeed,
         }
         if self.args.with_code_constrain:
@@ -306,14 +276,15 @@ class Model:
         if self.args.with_cyc:
             loss_G_dict.update(
                 {
-                    "code/cyc": F.l1_loss(self.z_a2x_spec, self.z_x)
-                    * self.args.lambda_cyc
+                    "code/cyc_spec": F.l1_loss(self.z_a2x_spec, self.z_x)
+                    * self.args.lambda_cyc,
+                    "code/cyc_share": F.l1_loss(self.z_a2x_share, self.z_motion_share) * self.args.lambda_cyc,
                 }
             )
         if self.args.with_ds:
             loss_G_dict.update(
                 {
-                    "pos/diverse": -F.l1_loss(a2x_p, a2x2_p.detach())
+                    "pos/diverse": -F.l1_loss(a2x_p, a2m_p.detach())
                     * self.args.lambda_ds,
                 }
             )
@@ -324,18 +295,16 @@ class Model:
         loss_G = torch.stack(list(loss_G_dict.values())).sum()
         return loss_G
 
-    def calculate_3d_loss(self, tgt_r, tgt_t, recon_m, a2m, a2x, a2x2, batch):
-        # tgt_r, tgt_t = self.motion_processor.decode_motion(tgt_m)
-        recon_r, recon_t = self.motion_processor.decode_motion(recon_m)
-        a2m_r, a2m_t = self.motion_processor.decode_motion(a2m)
-        a2x_r, a2x_t = self.motion_processor.decode_motion(a2x)
-        a2x2_r, a2x2_t = self.motion_processor.decode_motion(a2x2)
+    def calculate_3d_loss(self, tgt_m, recon_m, a2m, a2x, batch):
+        tgt_r = self.motion_processor.decode_motion(tgt_m)
+        recon_r = self.motion_processor.decode_motion(recon_m)
+        a2m_r = self.motion_processor.decode_motion(a2m)
+        a2x_r = self.motion_processor.decode_motion(a2x)
 
-        tgt_p = self.motion_processor.calculate_pos(tgt_r, tgt_t)
-        recon_p = self.motion_processor.calculate_pos(recon_r, recon_t)
-        a2m_p = self.motion_processor.calculate_pos(a2m_r, a2m_t)
-        a2x_p = self.motion_processor.calculate_pos(a2x_r, a2x_t)
-        a2x2_p = self.motion_processor.calculate_pos(a2x2_r, a2x2_t)
+        tgt_p = self.motion_processor.calculate_pos(tgt_r)
+        recon_p = self.motion_processor.calculate_pos(recon_r)
+        a2m_p = self.motion_processor.calculate_pos(a2m_r)
+        a2x_p = self.motion_processor.calculate_pos(a2x_r)
 
         tgt_s = self.motion_processor.calculate_joint_speed(tgt_p)
         recon_s = self.motion_processor.calculate_joint_speed(recon_p)
@@ -358,7 +327,7 @@ class Model:
             "pos/audio2position_x": joint_distance[
                 joint_distance > self.args.tolerance
             ].mean()
-            * self.args.lambda_pose,
+            * self.args.lambda_xpose,
             "speed/audio2speed_x": F.l1_loss(a2x_s, tgt_s) * self.args.lambda_xspeed,
         }
         if self.args.with_code_constrain:
@@ -373,14 +342,15 @@ class Model:
         if self.args.with_cyc:
             loss_G_dict.update(
                 {
-                    "code/cyc": F.l1_loss(self.z_a2x_spec, self.z_x)
-                    * self.args.lambda_cyc
+                    "code/cyc_spec": F.l1_loss(self.z_a2x_spec, self.z_x)
+                    * self.args.lambda_cyc,
+                    "code/cyc_share": F.l1_loss(self.z_a2x_share, self.z_motion_share) * self.args.lambda_cyc,
                 }
             )
         if self.args.with_ds:
             loss_G_dict.update(
                 {
-                    "pos/diverse": -F.l1_loss(a2x_p, a2x2_p.detach())
+                    "pos/diverse": -F.l1_loss(a2x_p, a2m_p.detach())
                     * self.args.lambda_ds,
                 }
             )
@@ -392,13 +362,8 @@ class Model:
         return loss_G
 
     def train(self, dataloader):
-        if not os.path.exists(self.args.ckpt_dir):
-            os.mkdir(self.args.ckpt_dir)
-        else:
-            if len(os.listdir(self.args.ckpt_dir)) > 0:
-                logging.warning("ckpt dir not empty")
+        os.makedirs(self.args.ckpt_dir, exist_ok=False)
         self.net_G.train()
-
         self.batch_counts_per_epoch = len(dataloader)
 
         init_lambda_ds = self.args.lambda_ds
@@ -411,32 +376,20 @@ class Model:
                     self.args.lambda_ds -= init_lambda_ds / 500000
                 audios = data["audios"].float().to(self.device)
                 motion = data["poses"].float().to(self.device)
-                if self.args.with_translation:
-                    trans = data["trans"].float().to(self.device)
                 self.optimG.zero_grad()
 
-                src_motion = motion.clone()
-                tgt_motion = motion.clone()
-                if self.args.with_translation:
-                    src_trans = trans.clone()
-                    tgt_trans = trans.clone()
-                    recon_m, a2m, a2x, a2x2 = self.train_one_batch(
-                        audios,
-                        self.motion_processor.encode_motion(src_motion, src_trans),
-                    )
-                else:
-                    recon_m, a2m, a2x, a2x2 = self.train_one_batch(
-                        audios, self.motion_processor.encode_motion(src_motion),
-                    )
-                if self.args.using_2D_data:
-                    loss_G = self.calculate_2d_loss(
-                        tgt_motion, recon_m, a2m, a2x, a2x2, batch
-                    )
-                else:
+                motion = self.motion_processor.encode_motion(motion)
+                recon_m, a2m, a2x = self.train_one_batch(
+                    audios, motion
+                )
+                if self.args.dataset in ["Trinity"]:
                     loss_G = self.calculate_3d_loss(
-                        tgt_motion, tgt_trans, recon_m, a2m, a2x, a2x2, batch
+                        motion, recon_m, a2m, a2x, batch
                     )
-
+                elif self.args.dataset in ["Speech2Gesture"]:
+                    loss_G = self.calculate_2d_loss(
+                        motion, recon_m, a2m, a2x, batch
+                    )
                 loss_G.backward()
                 self.optimG.step()
 
@@ -487,8 +440,6 @@ class VAE(nn.Module):
     def __init__(self, args) -> None:
         super(VAE, self).__init__()
         self.global_step = 0
-        self.freqbasis = args.freqbasis
-        self.feat_in_time_domain = args.feat_in_time_domain
 
     def reparameterize(cls, mu, logvar):
         eps = torch.randn_like(logvar)
@@ -498,8 +449,8 @@ class VAE(nn.Module):
     def kl_scheduler(self):
         return max((self.global_step // 10) % 10000 * 0.0001, 0.0001)
 
-    def kl_divergence(cls, mu, var):
-        return torch.mean(-0.5 * torch.sum(1 + var - mu.pow(2) - var.exp(), dim=2,))
+    def kl_divergence(cls, mu, logvar):
+        return torch.mean(-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1,))
 
     def step(self):
         self.global_step += 1
@@ -555,13 +506,7 @@ class Motion_Enc(VAE):
     def __init__(self, args):
         super(Motion_Enc, self).__init__(args)
         self.args = args
-        if self.args.using_2D_data:
-            joint_repr_dim = 2
-        else:
-            joint_repr_dim = 9
-        input_channel = args.joint_num * joint_repr_dim
-        if self.args.with_translation:
-            input_channel += 3
+        input_channel = args.input_joint_num * args.input_joint_repr_dim
         self.TCN = ConvNet(
             input_channel, [256, 256, 128, 128, 64], dropout=args.dropout,
         )
@@ -636,13 +581,7 @@ class Motion_Dec(VAE):
     def __init__(self, args):
         super(Motion_Dec, self).__init__(args)
         self.args = args
-        if args.using_2D_data:
-            joint_repr_dim = 2
-        else:
-            joint_repr_dim = 6
-        output_dim = joint_repr_dim * self.args.joint_num
-        if self.args.with_translation:
-            output_dim += 3
+        output_dim = args.output_joint_repr_dim * args.output_joint_num
 
         self.TCN = ConvNet(
             args.hidden_size, [64, 128, 128, 256, 256,], dropout=args.dropout,
@@ -659,37 +598,8 @@ class Motion_Dec(VAE):
         output = torch.cat((share_feature, spec_feature), dim=2)
         output = self.TCN(output.permute(0, 2, 1)).permute(0, 2, 1)
         output = self.pose_g(output)
-        if not self.args.using_2D_data:
-            B, T, _ = output.shape
-            if self.args.with_translation:
-                rot = output[:, :, :-3]
-                trans = output[:, :, -3:]
-            else:
-                rot = output
-            rot = rotation_6d_to_matrix(rot.reshape(-1, 6)).reshape(B, T, -1, 3, 3)
-            if self.args.with_translation:
-                output = torch.cat((rot.reshape(B, T, -1), trans), dim=-1)
-            else:
-                output = rot
         return output
 
-    def inference(self, z_share, z_spec):
-        z = torch.cat((z_share, z_spec), dim=2)
-        output = self.TCN(z.permute(0, 2, 1)).permute(0, 2, 1)
-        output = self.pose_g(output)
-        if not self.args.using_2D_data:
-            B, T, _ = output.shape
-            if self.args.with_translation:
-                rot = output[:, :, :-3]
-                trans = output[:, :, -3:]
-            else:
-                rot = output
-            rot = rotation_6d_to_matrix(rot.reshape(-1, 6)).reshape(B, T, -1, 3, 3)
-            if self.args.with_translation:
-                output = torch.cat((rot.reshape(B, T, -1), trans), dim=-1)
-            else:
-                output = rot
-        return output
 
 
 class MappingNet(VAE):

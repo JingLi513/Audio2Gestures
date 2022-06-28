@@ -15,10 +15,11 @@ def calculate_training_data_stats(model, dataloader, args):
     means = []
     vars = []
     for data in dataloader:
-        clip_len = args.seq_len
+        clip_len = 64
         start = 0
         end = start + clip_len
         poses = data["poses"].to(args.device)
+        poses = model.motion_processor.encode_motion(poses)
         seq_len = poses.shape[1]
         while end < seq_len:
 
