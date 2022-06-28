@@ -2,7 +2,7 @@
 Official implementation for Audio2Gestures: Generating Diverse Gestures from Speech Audio with Conditional Variational Autoencoders， ICCV
 
 ## Dependencies
-- [pytorch<1.9](https://pytorch.org/)
+- [pytorch](https://pytorch.org/)
 - [numpy](https://numpy.org/)
 - [librosa](https://librosa.org/)
 - [fbx](https://www.autodesk.com/developer-network/platform-technologies/fbx-sdk-2020-0)
