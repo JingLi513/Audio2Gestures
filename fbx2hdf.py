@@ -114,8 +114,8 @@ def fbx2hdf(config):
     data_dict["global_translation"] = global_translation
     print("shape of global_translation: {}".format(data_dict["global_translation"].shape))
 
-    data_dict["joint_trans_mats"] = trans_mats
-    print("shape of joint_trans_mats: {}".format(data_dict["joint_trans_mats"].shape))
+    data_dict["LclRotation"] = trans_mats
+    print("shape of joint_trans_mats: {}".format(data_dict["LclRotation"].shape))
     print("Frame rate: {}".format(data_dict["framerate"]))
     print("Saving data ...")
     t0 = time.time()
