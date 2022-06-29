@@ -218,7 +218,7 @@ def addSmplXSkeleton(fbxScene, trans, joint2num, kintree_table):
     return referenceNode, skeletonNodes
 
 
-def addSkiningWeight(fbxScene, smplx, geometryNode, referenceNode, skeletonNodes):
+def addSkiningWeight(fbxScene, smplx, geometryNode, skeletonNodes):
     lbs_weights = smplx["lbs_weights"]
     # print(lbs_weights.shape)
     # print(lbs_weights)
@@ -434,7 +434,7 @@ def animateScalingKeyFrames(animLayer, node, transforms_mat, frameDuration):
 
 
 def animateSkeleton(
-    fbxScene, referenceNode, skeletonNodes, frames, global_trans_mat, global_translation, frameRate, name="Take1"
+    fbxScene, skeletonNodes, frames, frameRate, name="Take1"
 ):
     frameDuration = 1.0 / frameRate
 
@@ -445,13 +445,13 @@ def animateSkeleton(
     animStack = fbx.FbxAnimStack.Create(fbxScene, name)
     animLayer = fbx.FbxAnimLayer.Create(fbxScene, "Base Layer")
     animStack.AddMember(animLayer)
-    animateGlobalTransformsFromTransMat(
-        animLayer=animLayer,
-        referenceNode=referenceNode,
-        global_trans_mat=global_trans_mat,
-        global_translation=global_translation,
-        frameDuration=frameDuration,
-    )
+    # animateGlobalTransformsFromTransMat(
+    #     animLayer=animLayer,
+    #     referenceNode=referenceNode,
+    #     global_trans_mat=global_trans_mat,
+    #     global_translation=global_translation,
+    #     frameDuration=frameDuration,
+    # )
 
     for nId in range(len(skeletonNodes)):
         animateRotationKeyFrames(
@@ -505,8 +505,12 @@ if __name__ == "__main__":
         smplx["trans"] = f["trans"][()]
     if len(smplx["lbs_weights"]) == 6890:
         model_type = "SMPL"
+        joint2num = smpl_joint2num
+        kintree_table = smpl_kintree_table
     elif len(smplx["lbs_weights"]) == 10475:
         model_type = "SMPL-X"
+        joint2num = smplx_joint2num
+        kintree_table = smplx_kintree_table
     else:
         print("Error")
         sys.exit(1)
@@ -517,26 +521,6 @@ if __name__ == "__main__":
         print("keys: {}".format(list(f.keys())))
         frames = f[args.key][()]
 
-        if model_type == "SMPL-X":
-            joint2num = smplx_joint2num
-            kintree_table = smplx_kintree_table
-        elif model_type == "SMPL":
-            joint2num = smpl_joint2num
-            kintree_table = smpl_kintree_table
-
-        if "joint_trans_mats" in f:
-            global_trans_mat = f["joint_trans_mats"][()][:, 0]
-            assert global_trans_mat.shape in ((frames.shape[0], 4, 4), (frames.shape[0], 3, 3))
-        elif "rot_mats" in f:
-            global_trans_mat = f["rot_mats"][()][:, 0]
-            assert global_trans_mat.shape in ((frames.shape[0], 4, 4), (frames.shape[0], 3, 3))
-        else:
-            print(">>>> NOTE: do NOT have global orientation")
-            global_trans_mat = np.zeros((frames.shape[0], frames.shape[1], 4, 4)) + np.eye(4)
-        if "global_translation" in f:
-            global_translation = f["global_translation"][()]
-        else:
-            global_translation = None
         if "framerate" in f:
             fps = f["framerate"][()]
             if args.fps is not None:
@@ -554,15 +538,12 @@ if __name__ == "__main__":
         fbxScene=fbxScene, trans=smplx["trans"], joint2num=joint2num, kintree_table=kintree_table
     )
 
-    addSkiningWeight(fbxScene, smplx, geometryNode, referenceNode, skeletonNodes)
+    addSkiningWeight(fbxScene, smplx, geometryNode, skeletonNodes)
     storeBindPose(fbxScene, geometryNode)
     animateSkeleton(
         fbxScene=fbxScene,
-        referenceNode=referenceNode,
         skeletonNodes=skeletonNodes,
         frames=frames,
-        global_trans_mat=global_trans_mat,
-        global_translation=global_translation,
         frameRate=fps,
     )
 
