@@ -23,7 +23,7 @@ def test_audio2pose(model, dataloader, args):
             with h5py.File(f"{result_dir}/{data['filename'][0]}", "w") as f:
                 print("writing", data["filename"][0])
                 f.create_dataset(
-                    "LclRotation", data=rot_mats.cpu().detach().numpy()
+                    "LclRotation", data=rot_mats.squeeze(0).cpu().detach().numpy()
                 )
                 f.create_dataset("poses", data=poses.squeeze(0).cpu().detach().numpy())
                 f.create_dataset("wave", data=data["audios"].squeeze(0))
