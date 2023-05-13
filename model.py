@@ -138,7 +138,7 @@ class Process_S2G_Motion(Motion_Process):
             len(motion.shape) == 3
         ), f"Expects an array of size BxTxC, but received {motion.shape}"
         B, T = motion.shape[:2]
-        motion = motion.reshape(B, T, 2, 48)
+        motion = motion.reshape(B, T, 2* 48)
         motion = torch.cat((torch.zeros(motion.shape[0], 2, 1), motion), dim=2)
         motion = motion * self.std + self.mean
         return motion
